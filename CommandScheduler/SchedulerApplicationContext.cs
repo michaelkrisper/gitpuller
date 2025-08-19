@@ -21,14 +21,22 @@ namespace CommandScheduler
         private Settings _settings;
         private List<Timer> _timers = new List<Timer>();
         private static List<LogEntry> _logs = new List<LogEntry>();
+        public static event Action<LogEntry> OnLogEntryAdded;
+
+        private bool _isPaused;
+        private readonly MenuItem _pauseMenuItem;
+        private readonly System.Windows.Forms.Timer _pauseTimer;
 
         public SchedulerApplicationContext()
         {
+            _pauseMenuItem = new MenuItem("Pause", PauseMenuItem_Click);
+
             _notifyIcon = new NotifyIcon
             {
                 Icon = CreateHourglassIcon(),
                 ContextMenu = new ContextMenu(new[]
                 {
+                    _pauseMenuItem,
                     new MenuItem("Options", ShowOptions),
                     new MenuItem("Log", ShowLog),
                     new MenuItem("Exit", Exit)
@@ -36,7 +44,40 @@ namespace CommandScheduler
                 Visible = true
             };
 
+            _pauseTimer = new System.Windows.Forms.Timer { Interval = 10000 };
+            _pauseTimer.Tick += (sender, args) => Resume();
+
             LoadSettingsAndStartTimers();
+        }
+
+        private void Pause()
+        {
+            if (_isPaused) return;
+            _isPaused = true;
+            StopTimers();
+            _pauseMenuItem.Text = "Resume";
+            _pauseTimer.Start();
+        }
+
+        private void Resume()
+        {
+            if (!_isPaused) return;
+            _isPaused = false;
+            _pauseTimer.Stop();
+            LoadSettingsAndStartTimers();
+            _pauseMenuItem.Text = "Pause";
+        }
+
+        private void PauseMenuItem_Click(object sender, EventArgs e)
+        {
+            if (_isPaused)
+            {
+                Resume();
+            }
+            else
+            {
+                Pause();
+            }
         }
 
         private Icon CreateHourglassIcon()
@@ -86,23 +127,22 @@ namespace CommandScheduler
         {
             var stopwatch = new Stopwatch();
             var output = new StringBuilder();
+            var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    Arguments = $"/c {command.Command}",
+                    WorkingDirectory = command.WorkingDirectory,
+                    WindowStyle = ProcessWindowStyle.Hidden,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false
+                }
+            };
             try
             {
-                var process = new Process
-                {
-                    StartInfo = new ProcessStartInfo
-                    {
-                        FileName = "cmd.exe",
-                        Arguments = $"/c {command.Command}",
-                        WorkingDirectory = command.WorkingDirectory,
-                        WindowStyle = ProcessWindowStyle.Hidden,
-                        CreateNoWindow = true,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        UseShellExecute = false
-                    }
-                };
-
                 process.OutputDataReceived += (sender, args) => output.AppendLine(args.Data);
                 process.ErrorDataReceived += (sender, args) => output.AppendLine(args.Data);
 
@@ -112,20 +152,40 @@ namespace CommandScheduler
                 process.BeginErrorReadLine();
                 process.WaitForExit();
                 stopwatch.Stop();
+
+                if (process.ExitCode != 0)
+                {
+                    command.FailureCount++;
+                }
+                else
+                {
+                    command.FailureCount = 0;
+                }
             }
             catch (Exception ex)
             {
                 output.AppendLine("Exception: " + ex.Message);
+                command.FailureCount++;
             }
             finally
             {
-                _logs.Add(new LogEntry
+                if (command.FailureCount >= 3)
+                {
+                    command.IsEnabled = false;
+                    _settings.Save();
+                    StopTimers();
+                    LoadSettingsAndStartTimers();
+                }
+
+                var logEntry = new LogEntry
                 {
                     Timestamp = DateTime.Now,
                     Command = command.Command,
                     Output = output.ToString(),
                     Duration = stopwatch.Elapsed
-                });
+                };
+                _logs.Add(logEntry);
+                OnLogEntryAdded?.Invoke(logEntry);
             }
         }
 
