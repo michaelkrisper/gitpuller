@@ -18,5 +18,8 @@ namespace CommandScheduler
         public string WorkingDirectory { get; set; }
         public string Command { get; set; }
         public bool IsEnabled { get; set; }
+
+        [XmlIgnore]
+        public int FailureCount { get; set; }
     }
 }
