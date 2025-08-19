@@ -70,7 +70,7 @@ namespace CommandScheduler
             StopTimers();
             foreach (var command in _settings.Commands)
             {
-                if (command.IsEnabled)
+                if (command.IsEnabled && command.TimePeriod.TotalMilliseconds > 0)
                 {
                     var timer = new Timer(command.TimePeriod.TotalMilliseconds);
                     timer.Elapsed += (sender, args) => ExecuteCommand(command);
