@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows.Forms;
 using Timer = System.Timers.Timer;
 
@@ -16,17 +17,20 @@ namespace CommandScheduler
 
         private NotifyIcon _notifyIcon;
         private OptionsForm _optionsForm;
+        private LogForm _logForm;
         private Settings _settings;
         private List<Timer> _timers = new List<Timer>();
+        private static List<LogEntry> _logs = new List<LogEntry>();
 
         public SchedulerApplicationContext()
         {
             _notifyIcon = new NotifyIcon
             {
-                Icon = CreateGearIcon(),
+                Icon = CreateHourglassIcon(),
                 ContextMenu = new ContextMenu(new[]
                 {
                     new MenuItem("Options", ShowOptions),
+                    new MenuItem("Log", ShowLog),
                     new MenuItem("Exit", Exit)
                 }),
                 Visible = true
@@ -35,27 +39,25 @@ namespace CommandScheduler
             LoadSettingsAndStartTimers();
         }
 
-        private Icon CreateGearIcon()
+        private Icon CreateHourglassIcon()
         {
             var bitmap = new Bitmap(32, 32);
             using (var graphics = Graphics.FromImage(bitmap))
             {
                 graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                var pen = new Pen(Color.Black, 2);
 
-                // Draw gear body
-                graphics.FillEllipse(Brushes.Gray, 6, 6, 20, 20);
-                graphics.FillEllipse(Brushes.White, 10, 10, 12, 12);
+                // Hourglass frame
+                graphics.DrawLine(pen, 8, 4, 24, 4);
+                graphics.DrawLine(pen, 8, 28, 24, 28);
+                graphics.DrawLine(pen, 8, 4, 8, 28);
+                graphics.DrawLine(pen, 24, 4, 24, 28);
 
-                // Draw gear teeth
-                for (int i = 0; i < 8; i++)
-                {
-                    var angle = i * 45;
-                    var x1 = 16 + (float)(10 * Math.Cos(angle * Math.PI / 180));
-                    var y1 = 16 + (float)(10 * Math.Sin(angle * Math.PI / 180));
-                    var x2 = 16 + (float)(14 * Math.Cos(angle * Math.PI / 180));
-                    var y2 = 16 + (float)(14 * Math.Sin(angle * Math.PI / 180));
-                    graphics.DrawLine(new Pen(Brushes.Gray, 4), x1, y1, x2, y2);
-                }
+                // Hourglass shape
+                Point[] topGlass = { new Point(10, 6), new Point(22, 6), new Point(16, 15) };
+                Point[] bottomGlass = { new Point(10, 26), new Point(22, 26), new Point(16, 17) };
+                graphics.FillPolygon(Brushes.LightBlue, topGlass);
+                graphics.FillPolygon(Brushes.LightSkyBlue, bottomGlass);
             }
 
             IntPtr hicon = bitmap.GetHicon();
@@ -82,6 +84,8 @@ namespace CommandScheduler
 
         private void ExecuteCommand(CommandConfig command)
         {
+            var stopwatch = new Stopwatch();
+            var output = new StringBuilder();
             try
             {
                 var process = new Process
@@ -92,14 +96,36 @@ namespace CommandScheduler
                         Arguments = $"/c {command.Command}",
                         WorkingDirectory = command.WorkingDirectory,
                         WindowStyle = ProcessWindowStyle.Hidden,
-                        CreateNoWindow = true
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        UseShellExecute = false
                     }
                 };
+
+                process.OutputDataReceived += (sender, args) => output.AppendLine(args.Data);
+                process.ErrorDataReceived += (sender, args) => output.AppendLine(args.Data);
+
+                stopwatch.Start();
                 process.Start();
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+                process.WaitForExit();
+                stopwatch.Stop();
             }
             catch (Exception ex)
             {
-                // Log the exception
+                output.AppendLine("Exception: " + ex.Message);
+            }
+            finally
+            {
+                _logs.Add(new LogEntry
+                {
+                    Timestamp = DateTime.Now,
+                    Command = command.Command,
+                    Output = output.ToString(),
+                    Duration = stopwatch.Elapsed
+                });
             }
         }
 
@@ -121,6 +147,16 @@ namespace CommandScheduler
                 _optionsForm.FormClosed += (o, args) => LoadSettingsAndStartTimers();
             }
             _optionsForm.Show();
+        }
+
+        private void ShowLog(object sender, EventArgs e)
+        {
+            if (_logForm == null || _logForm.IsDisposed)
+            {
+                _logForm = new LogForm();
+            }
+            _logForm.SetLogs(_logs);
+            _logForm.Show();
         }
 
         private void Exit(object sender, EventArgs e)
