@@ -1,13 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using Newtonsoft.Json;
+using System.Xml.Serialization;
 
 namespace CommandScheduler
 {
     public class Settings
     {
-        private static readonly string _filePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "CommandScheduler", "settings.json");
+        private static readonly string _filePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "CommandScheduler", "settings.xml");
 
         public List<CommandConfig> Commands { get; set; }
 
@@ -23,8 +23,19 @@ namespace CommandScheduler
                 return new Settings();
             }
 
-            var json = File.ReadAllText(_filePath);
-            return JsonConvert.DeserializeObject<Settings>(json);
+            try
+            {
+                var serializer = new XmlSerializer(typeof(Settings));
+                using (var reader = new StreamReader(_filePath))
+                {
+                    return (Settings)serializer.Deserialize(reader);
+                }
+            }
+            catch (Exception)
+            {
+                // If deserialization fails, return new settings
+                return new Settings();
+            }
         }
 
         public void Save()
@@ -35,8 +46,11 @@ namespace CommandScheduler
                 Directory.CreateDirectory(directory);
             }
 
-            var json = JsonConvert.SerializeObject(this, Formatting.Indented);
-            File.WriteAllText(_filePath, json);
+            var serializer = new XmlSerializer(typeof(Settings));
+            using (var writer = new StreamWriter(_filePath))
+            {
+                serializer.Serialize(writer, this);
+            }
         }
     }
 }
